@@ -1,0 +1,12 @@
+# Gold evaluation set. One JSON object per line. Lines starting with # are ignored.
+# Fields: id, question, should_answer, expected_keywords, expected_sources
+{"id": "q1", "question": "What does TF-IDF stand for?", "should_answer": true, "expected_keywords": ["term frequency", "inverse document frequency"], "expected_sources": ["vector_search.md"]}
+{"id": "q2", "question": "How does RAG help reduce hallucination?", "should_answer": true, "expected_keywords": ["hallucination"], "expected_sources": ["rag.md"]}
+{"id": "q3", "question": "What is cosine similarity?", "should_answer": true, "expected_keywords": ["cosine", "angle"], "expected_sources": ["vector_search.md"]}
+{"id": "q4", "question": "Why does chunking matter in a RAG system?", "should_answer": true, "expected_keywords": ["chunking"], "expected_sources": ["rag.md"]}
+{"id": "q5", "question": "What is a system prompt?", "should_answer": true, "expected_keywords": ["role", "rules"], "expected_sources": ["prompting.md"]}
+{"id": "q6", "question": "What does groundedness mean?", "should_answer": true, "expected_keywords": ["supported", "claim"], "expected_sources": ["evaluation.md"]}
+{"id": "q7", "question": "What is a retrieval threshold?", "should_answer": true, "expected_keywords": ["similarity", "abstains"], "expected_sources": ["guardrails.md"]}
+{"id": "q8", "question": "What is few-shot prompting?", "should_answer": true, "expected_keywords": ["examples"], "expected_sources": ["prompting.md"]}
+{"id": "q9", "question": "What is the boiling point of water in Celsius?", "should_answer": false, "expected_keywords": [], "expected_sources": []}
+{"id": "q10", "question": "Who won the 2022 FIFA World Cup?", "should_answer": false, "expected_keywords": [], "expected_sources": []}

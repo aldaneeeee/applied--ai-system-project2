@@ -1,0 +1,90 @@
+%% GroundedRAG - System Architecture
+%% Data flows from the user's question, through the agentic RAG pipeline,
+%% and back to a grounded, cited answer (or a safe abstention).
+%% Render at https://mermaid.live or with the Mermaid VS Code extension.
+
+flowchart TD
+    subgraph USER["User"]
+        Q["Question"]
+        OUT["Answer + citations<br/>(or safe abstention)"]
+    end
+
+    subgraph IF["Interfaces"]
+        CLI["CLI<br/>(ingest / ask / eval / demo)"]
+        UI["Streamlit Web UI"]
+    end
+
+    subgraph INGEST["Ingestion (offline, run once)"]
+        DOCS[("data/docs<br/>.md / .txt / .pdf")]
+        LOADER["Loader + Chunker<br/>documents.py"]
+        VEC["TF-IDF Vectorizer<br/>retriever.py"]
+        INDEX[("Persisted Index<br/>index/")]
+        DOCS --> LOADER --> VEC --> INDEX
+    end
+
+    subgraph PIPE["Agentic RAG Pipeline (pipeline.py)"]
+        direction TB
+        G1{{"Guardrail:<br/>validate input"}}
+        PLAN["1 - Plan<br/>question to search queries"]
+        RET["2 - Retrieve<br/>top-k by cosine similarity"]
+        G2{{"Guardrail:<br/>score >= min_score?"}}
+        ANS["3 - Answer<br/>grounded, with citations"]
+        VER["4 - Verify (self-check)<br/>every claim supported?"]
+        DEC{"Grounded?"}
+        ABSTAIN["Abstain safely<br/>'not enough information'"]
+        FINAL["Final grounded answer"]
+
+        G1 -->|ok| PLAN
+        G1 -->|empty / too long| ABSTAIN
+        PLAN --> RET
+        RET --> G2
+        G2 -->|below threshold| ABSTAIN
+        G2 -->|ok| ANS
+        ANS --> VER --> DEC
+        DEC -->|yes| FINAL
+        DEC -->|"no, retries left"| PLAN
+        DEC -->|"no, retries exhausted"| ABSTAIN
+    end
+
+    subgraph LLM["Model Backend (llm.py)"]
+        ANTH["AnthropicBackend<br/>Claude (claude-opus-4-8)<br/>structured JSON outputs"]
+        OFF["OfflineBackend<br/>deterministic, no API key"]
+        SEL{"API key present?"}
+        SEL -->|yes| ANTH
+        SEL -->|no| OFF
+    end
+
+    subgraph OBS["Cross-cutting"]
+        LOG[["Logging<br/>logs/ragqa.log + console"]]
+        EVAL["Evaluation harness<br/>evaluation.py"]
+        GOLD[("Gold Q&A set<br/>data/eval/qa_eval.jsonl")]
+        TESTS["Test suite<br/>pytest (offline)"]
+        HUMAN["Human review<br/>read metrics, tune, add docs"]
+    end
+
+    %% Main request/response flow
+    Q --> CLI
+    Q --> UI
+    CLI --> G1
+    UI --> G1
+    INDEX -. loaded by .-> RET
+    PLAN -. calls .-> LLM
+    ANS -. calls .-> LLM
+    VER -. calls .-> LLM
+    FINAL --> OUT
+    ABSTAIN --> OUT
+
+    %% Observability / reliability
+    PIPE -. emits .-> LOG
+    GOLD --> EVAL
+    EVAL -. runs .-> PIPE
+    EVAL --> HUMAN
+    TESTS -. exercises .-> PIPE
+    HUMAN -. curate .-> DOCS
+
+    classDef guard fill:#fde2e2,stroke:#c0392b,color:#000;
+    classDef store fill:#e8f0fe,stroke:#3367d6,color:#000;
+    classDef model fill:#e6f4ea,stroke:#1e8e3e,color:#000;
+    class G1,G2 guard;
+    class DOCS,INDEX,GOLD store;
+    class ANTH,OFF model;
