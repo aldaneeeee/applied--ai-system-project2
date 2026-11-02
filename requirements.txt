@@ -1,20 +1,10 @@
-# Core AI SDK
-anthropic>=0.116.0
+# Claude API (only used when ANTHROPIC_API_KEY is set; the app runs offline without it)
+anthropic>=2.3.0
 
-# Retrieval (local, offline-capable TF-IDF vector search)
-scikit-learn>=1.4
-numpy>=1.26
-
-# Document ingestion
-pypdf>=4.0
-
-# Config / environment
+# Loads settings from a .env file
 python-dotenv>=1.0
 
-# Persistence of the retrieval index
-joblib>=1.3
-
-# Optional web UI
+# Optional web UI (app.py)
 streamlit>=1.30
 
 # Testing

@@ -1,0 +1,82 @@
+%% Music Recommender + AI DJ - System Architecture
+%% Render at https://mermaid.live, with the VS Code Mermaid extension,
+%% or view it in README.md (GitHub renders Mermaid automatically).
+
+flowchart TD
+    subgraph USER["Listener"]
+        REQ["Plain-English request<br/>'mellow lofi for studying'"]
+        OUT["Ranked songs + scores<br/>+ explanation + notes"]
+    end
+
+    subgraph IF["Interfaces"]
+        CLI["CLI<br/>python -m src.main --ask"]
+        UI["Streamlit UI<br/>app.py"]
+        CLASSIC["Original demo<br/>python -m src.main"]
+    end
+
+    subgraph AGENT["AI DJ agentic workflow (src/ai_dj.py)"]
+        direction TB
+        V{{"1 Validate input<br/>empty / too long / no words"}}
+        I["2 Interpret<br/>request to genre, mood, energy"]
+        N{{"3 Normalize guardrail<br/>catalog-only values, clamp 0-1,<br/>off-topic check"}}
+        R["4 Recommend (tool call)<br/>recommend_songs()"]
+        E["5 Explain picks"]
+        C{{"6 Self-check<br/>names only recommended songs<br/>+ mentions top pick?"}}
+        REJ["Polite refusal"]
+        TPL["Rule-based reasons<br/>(template fallback)"]
+
+        V -->|ok| I --> N
+        V -->|invalid| REJ
+        N -->|off-topic| REJ
+        N -->|profile| R --> E --> C
+        C -->|fail| TPL
+    end
+
+    subgraph ORIG["Original Module 1-3 recommender (src/recommender.py)"]
+        CSV[("data/songs.csv<br/>18 songs")]
+        SCORE["score_song()<br/>genre +1, mood +1, energy up to +2"]
+        CSV --> SCORE
+    end
+
+    subgraph LLM["Language backends (src/llm.py)"]
+        SEL{"DJ_BACKEND /<br/>API key set?"}
+        CLAUDE["ClaudeBackend<br/>claude-opus-5-5<br/>structured JSON output"]
+        OFF["OfflineBackend<br/>keyword rules + templates"]
+        SEL -->|yes| CLAUDE
+        SEL -->|no| OFF
+    end
+
+    subgraph REL["Reliability and human oversight"]
+        LOG[["logs/musicrec.log<br/>every step traced"]]
+        GOLD[("data/eval/dj_eval.jsonl<br/>16 core + 8 challenge cases")]
+        EVAL["src/evaluate.py<br/>accuracy metrics + report"]
+        TESTS["pytest suite<br/>39 offline tests, fake Claude client"]
+        HUMAN["Developer review<br/>read report and logs,<br/>fix rules / prompts / data"]
+    end
+
+    REQ --> CLI & UI
+    CLI & UI --> V
+    CLASSIC --> SCORE
+    R --> SCORE
+    I -. calls .-> SEL
+    E -. calls .-> SEL
+    CLAUDE -. "API error: fall back" .-> OFF
+    C -->|pass| OUT
+    TPL --> OUT
+    REJ --> OUT
+
+    AGENT -. emits .-> LOG
+    GOLD --> EVAL -. runs .-> AGENT
+    TESTS -. exercises .-> AGENT
+    EVAL --> HUMAN
+    LOG --> HUMAN
+    HUMAN -. improves .-> LLM
+
+    classDef guard fill:#fde2e2,stroke:#c0392b,color:#000;
+    classDef store fill:#e8f0fe,stroke:#3367d6,color:#000;
+    classDef model fill:#e6f4ea,stroke:#1e8e3e,color:#000;
+    classDef orig fill:#fff4d6,stroke:#b8860b,color:#000;
+    class V,N,C guard;
+    class CSV,GOLD store;
+    class CLAUDE,OFF model;
+    class SCORE,R orig;

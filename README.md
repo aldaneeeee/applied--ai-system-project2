@@ -1,269 +1,430 @@
-# 🔎 GroundedRAG — a Retrieval-Augmented, Self-Checking Q&A System
+# 🎧 Mood Catcher AI DJ — a Music Recommender with an Agentic AI Layer
 
-## Title and Summary
+**Mood Catcher AI DJ** recommends songs from a plain-English request like
+*"something mellow and chill to study to, lo-fi please."* An **agentic AI
+workflow** interprets the request, calls the original rule-based recommender as
+a tool, explains the picks, and **checks its own explanation** before showing
+it. Guardrails reject bad input and off-topic requests, and every step is logged.
 
-**GroundedRAG** answers questions about a collection of documents. Instead of
-trusting a language model's memory, it **retrieves** the most relevant passages,
-**answers only from those passages with citations**, and then **verifies its own
-answer** before showing it to you. When the documents don't support an answer,
-it says so rather than guessing.
+The project extends my **CodePath AI 110 Modules 1–3 Music Recommender
+Simulation**. The original scoring engine still makes every ranking decision.
+The AI handles only the language around it: understanding the request going in
+and explaining the result coming out.
 
-This matters because plain language models *hallucinate* (invent facts), go
-*stale* (their training has a cutoff date), and can't *show their sources*.
-GroundedRAG is a small, transparent, and reliable implementation of the standard
-industry fix — Retrieval-Augmented Generation (RAG) — hardened with an agentic
-self-check loop, safety guardrails, and a measurable evaluation harness. It runs
-with **Claude (`claude-opus-4-8`)** when an API key is available, and **fully
-offline** with a deterministic backend otherwise, so anyone can clone it and run
-it with no key and no setup friction.
+It runs with **Claude (`claude-opus-5-5`)** when an API key is configured, and
+**fully offline** with a deterministic keyword parser when it isn't. Anyone can
+clone it, run it, and pass every test without a key.
 
----
-
-## My Original Project (Modules 1–3)
-
-My original project was the **Music Recommender Simulation** (model name
-*"Mood Catcher 1.0"*). It represented songs and a user "taste profile" as data
-and used a transparent, rule-based scoring function to recommend songs: each
-track earned points for matching the listener's favorite genre and mood and for
-how close its energy was to the listener's target, and the top-scoring songs were
-returned **with a plain-English reason for every pick**. Its guiding goals were
-*transparency over accuracy* and *explaining why* each recommendation was made,
-rather than optimizing for engagement like a real streaming service.
-
-**How GroundedRAG builds on it.** Both systems are, at heart, *similarity-ranking
-engines that prioritize explainability*: the recommender scored songs by how
-closely they matched a taste profile; GroundedRAG scores document passages by how
-closely they match a question (cosine similarity over TF-IDF vectors), returns
-the top matches, and — like the recommender's "reasons" — attaches a **citation**
-to every claim so the user can see exactly *why* an answer was given. GroundedRAG
-extends those ideas into a full applied-AI system by adding a real large language
-model, an agentic self-verification loop, safety guardrails, and a formal
-evaluation harness.
+> 📹 **Demo video:** _add your walkthrough link here_
 
 ---
 
-## Architecture Overview
+## Original Project (Modules 1–3)
 
-The full system diagram is in
-[`diagrams/architectures.mmd`](diagrams/architectures.mmd). At a high level, a
-question flows left-to-right through a multi-step **agentic pipeline** and comes
-back as a grounded, cited answer — or a safe abstention:
+The original project was the **Music Recommender Simulation ("Mood Catcher
+1.0")**, a small, transparent, content-based recommender:
+
+- **Data:** 18 songs in `data/songs.csv`, each with a genre, mood, and audio
+  features (energy, valence, danceability, acousticness, tempo).
+- **Input:** a taste profile typed into the code (`genre`, `mood`, `energy`).
+- **Scoring:** `score_song()` gives **+1.0** for a genre match, **+1.0** for a
+  mood match, and **up to +2.0** for how close a song's energy is to the target.
+  These are the weights after my *Weight Shift* experiment; the starter used
+  genre +2.0 and energy up to +1.0.
+- **Output:** the top *k* songs, each with **a plain-English reason** for the pick.
+- **Guiding goal:** *transparency over accuracy*. Every recommendation can be
+  explained.
+
+Its main limitations, documented in [`model_card.md`](model_card.md), were:
+- Users had to type exact catalog values (`genre="pop"`).
+- Exact string matching meant "pop" never matched "indie pop".
+- The `Recommender` class was still a starter stub.
+
+The original Module 3 README is kept at
+[`docs/module3_original_README.md`](docs/module3_original_README.md).
+
+## What's new in this version
+
+| Area | Change |
+|---|---|
+| **AI feature** | `src/ai_dj.py`: an **agentic workflow** (validate → interpret → normalize → recommend → explain → self-check) that turns free text into a recommendation |
+| **AI backends** | `src/llm.py`: **Claude** with structured JSON output, plus an **offline** keyword parser behind the same interface |
+| **Guardrails** | Input validation, catalog-only profile values, energy clamping, off-topic refusal, and an explanation self-check that blocks invented song titles |
+| **Reliability** | `src/evaluate.py` + `data/eval/dj_eval.jsonl` (24 labeled requests); **39 automated tests**, including a fake Claude client |
+| **Logging** | Every step is written to `logs/musicrec.log`; warnings are also shown in the console |
+| **Original code** | `Recommender.recommend()` / `explain_recommendation()` stubs finished by wrapping the existing `score_song()`; `load_songs()` errors now use logging; scoring logic **unchanged** |
+| **Interfaces** | `python -m src.main` still runs the original demo; `--ask` adds the AI DJ; `app.py` is a Streamlit UI |
+
+---
+
+## Architecture
+
+Source: [`diagrams/architecture.mmd`](diagrams/architecture.mmd). GitHub renders the copy below.
 
 ```mermaid
-flowchart LR
-    Q["User question"] --> G1{{"Guardrail:<br/>validate input"}}
-    G1 -->|ok| PLAN["Plan queries"]
-    G1 -->|invalid| ABS["Abstain"]
-    PLAN --> RET["Retrieve top-k<br/>(TF-IDF vector search)"]
-    RET --> G2{{"Guardrail:<br/>score >= threshold?"}}
-    G2 -->|below| ABS
-    G2 -->|ok| ANS["Answer with citations"]
-    ANS --> VER["Verify (self-check)"]
-    VER --> DEC{"Grounded?"}
-    DEC -->|yes| OUT["Answer + citations"]
-    DEC -->|"no, retry"| PLAN
-    DEC -->|"no, give up"| ABS
-    ABS --> OUT
-    IDX[("Index")] -.-> RET
-    LLM["Claude / offline backend"] -.-> PLAN & ANS & VER
-    EVAL["Evaluation harness"] -.-> DEC
+flowchart TD
+    subgraph USER["Listener"]
+        REQ["Plain-English request<br/>'mellow lofi for studying'"]
+        OUT["Ranked songs + scores<br/>+ explanation + notes"]
+    end
+
+    subgraph IF["Interfaces"]
+        CLI["CLI<br/>python -m src.main --ask"]
+        UI["Streamlit UI<br/>app.py"]
+        CLASSIC["Original demo<br/>python -m src.main"]
+    end
+
+    subgraph AGENT["AI DJ agentic workflow (src/ai_dj.py)"]
+        direction TB
+        V{{"1 Validate input<br/>empty / too long / no words"}}
+        I["2 Interpret<br/>request to genre, mood, energy"]
+        N{{"3 Normalize guardrail<br/>catalog-only values, clamp 0-1,<br/>off-topic check"}}
+        R["4 Recommend (tool call)<br/>recommend_songs()"]
+        E["5 Explain picks"]
+        C{{"6 Self-check<br/>names only recommended songs<br/>+ mentions top pick?"}}
+        REJ["Polite refusal"]
+        TPL["Rule-based reasons<br/>(template fallback)"]
+
+        V -->|ok| I --> N
+        V -->|invalid| REJ
+        N -->|off-topic| REJ
+        N -->|profile| R --> E --> C
+        C -->|fail| TPL
+    end
+
+    subgraph ORIG["Original Module 1-3 recommender (src/recommender.py)"]
+        CSV[("data/songs.csv<br/>18 songs")]
+        SCORE["score_song()<br/>genre +1, mood +1, energy up to +2"]
+        CSV --> SCORE
+    end
+
+    subgraph LLM["Language backends (src/llm.py)"]
+        SEL{"DJ_BACKEND /<br/>API key set?"}
+        CLAUDE["ClaudeBackend<br/>claude-opus-5-5<br/>structured JSON output"]
+        OFF["OfflineBackend<br/>keyword rules + templates"]
+        SEL -->|yes| CLAUDE
+        SEL -->|no| OFF
+    end
+
+    subgraph REL["Reliability and human oversight"]
+        LOG[["logs/musicrec.log<br/>every step traced"]]
+        GOLD[("data/eval/dj_eval.jsonl<br/>16 core + 8 challenge cases")]
+        EVAL["src/evaluate.py<br/>accuracy metrics + report"]
+        TESTS["pytest suite<br/>39 offline tests, fake Claude client"]
+        HUMAN["Developer review<br/>read report and logs,<br/>fix rules / prompts / data"]
+    end
+
+    REQ --> CLI & UI
+    CLI & UI --> V
+    CLASSIC --> SCORE
+    R --> SCORE
+    I -. calls .-> SEL
+    E -. calls .-> SEL
+    CLAUDE -. "API error: fall back" .-> OFF
+    C -->|pass| OUT
+    TPL --> OUT
+    REJ --> OUT
+
+    AGENT -. emits .-> LOG
+    GOLD --> EVAL -. runs .-> AGENT
+    TESTS -. exercises .-> AGENT
+    EVAL --> HUMAN
+    LOG --> HUMAN
+    HUMAN -. improves .-> LLM
 ```
 
-The pieces and how data moves between them:
+**How data moves through the system**
 
-1. **Ingestion (offline, run once).** Documents in `data/docs/` (`.md`/`.txt`/
-   `.pdf`) are loaded, split into overlapping **chunks**, vectorized with
-   **TF-IDF**, and saved to a persisted **index** (`index/`).
-2. **The agentic pipeline** (`src/ragqa/pipeline.py`) — the core advanced AI
-   feature. A single question runs through: **(1) input guardrail →
-   (2) plan** (turn the question into focused search queries) **→ (3) retrieve**
-   the top-k most similar chunks **→ (4) retrieval guardrail** (abstain if
-   nothing is relevant enough) **→ (5) answer** using only those chunks, with
-   citations **→ (6) verify** that every claim is grounded in the cited chunks
-   **→ (7) retry or abstain** if it isn't.
-3. **The model backend** (`src/ragqa/llm.py`) is swappable: **Claude** via the
-   Anthropic Messages API with structured JSON outputs, or a **deterministic
-   offline backend** (extractive answers + lexical grounding checks) that needs
-   no key or network.
-4. **Cross-cutting concerns**: **logging** to console and `logs/ragqa.log`; an
-   **evaluation harness** that runs a gold Q&A set through the pipeline; a
-   **test suite**; and **human review** of metrics/traces to curate documents
-   and tune thresholds.
+1. **Validate** (guardrail). The request is cleaned of control characters and
+   rejected if it is empty, longer than 300 characters, or has no letters.
+2. **Interpret** (AI). The backend maps the text to a taste profile.
+   - Claude gets the catalog's allowed genres and moods as a JSON-schema `enum`,
+     so it can only answer with values that exist in the catalog.
+   - The offline backend uses keyword and synonym rules.
+   - If Claude fails (bad key, network error, refusal, unusable output), the
+     workflow **falls back to the offline parser** and records a note.
+3. **Normalize** (guardrail). Values outside the catalog are dropped with a
+   warning, energy is clamped to 0–1 (default 0.5), and off-topic requests are
+   refused here.
+4. **Recommend** (tool call). The profile goes to the **unchanged** original
+   `recommend_songs()`, which scores and ranks every song.
+5. **Explain** (AI). The backend writes a short explanation from the scores and reasons.
+6. **Self-check.** The explanation must name the top pick and **no song that
+   wasn't recommended**. If it fails, the user sees the rule-based reasons instead.
 
 ---
 
-## Setup Instructions
+## Setup
 
-Requires **Python 3.10+**.
+Requires **Python 3.10+** (tested on Python 3.13.2, macOS).
 
 ```bash
-# 1. Enter the project
+# 1. Clone and enter the project
+git clone https://github.com/aldaneeeee/applied--ai-system-project2.git
 cd applied--ai-system-project2
 
 # 2. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-# 3. Install dependencies
+# 3. Install dependencies (anthropic, python-dotenv, streamlit, pytest)
 pip install -r requirements.txt
 
-# 4. Build the retrieval index from data/docs (run once, or after changing docs)
-python -m src.ragqa.cli ingest
-
-# 5. Ask a question
-python -m src.ragqa.cli ask "What does TF-IDF stand for?"
+# 4. (Optional) enable Claude: copy the template and paste your key into .env
+cp .env.example .env
 ```
 
-Other commands (also available via the `Makefile`, e.g. `make demo`):
+**Configuration (all optional, in `.env`):**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | _(empty)_ | Your key from <https://console.anthropic.com/>. Without it the app runs offline. |
+| `DJ_BACKEND` | `auto` | `auto` (Claude if a key is set), `claude` (always; clear error if no key), or `offline` |
+| `DJ_MODEL` | `claude-opus-5-5` | The Claude model to use |
+
+`.env` is listed in `.gitignore`, so your key is never committed.
+
+## Running it
 
 ```bash
-python -m src.ragqa.cli demo     # canned end-to-end demo (3 answerable + 1 out-of-scope)
-python -m src.ragqa.cli eval     # run the evaluation harness and print metrics
-pytest                           # run the offline test suite (27 tests)
-streamlit run app_streamlit.py   # optional web UI
+python -m src.main                                   # original Module 3 demo
+python -m src.main --ask "upbeat happy pop for a road trip"
+python -m src.main --ask "chill lofi for studying" -k 3 --trace   # show each agent step
+python -m src.main --ask "..." --backend offline     # force a backend
+python -m src.evaluate                               # reliability evaluation
+pytest                                               # test suite (offline)
+streamlit run app.py                                 # web UI
 ```
 
-**Configuration is optional.** Every setting has a safe default, so the app runs
-with no configuration at all (in offline mode). To use Claude instead, copy
-`.env.example` to `.env` and set `ANTHROPIC_API_KEY` — **no code changes
-needed**. Key settings: `RAGQA_BACKEND` (`auto`/`anthropic`/`offline`),
-`RAGQA_MODEL`, `RAGQA_TOP_K`, `RAGQA_MIN_SCORE` (abstention threshold).
-
-**Use your own documents:** drop `.md`/`.txt`/`.pdf` files into `data/docs/`,
-re-run `ingest`, and ask away.
+The `Makefile` has shortcuts: `make run`, `make ask Q="..."`, `make eval`, `make test`, `make ui`.
 
 ---
 
 ## Sample Interactions
 
-These are real outputs from the offline backend (abridged for readability).
+These are real outputs from the **offline backend** (`--backend offline`, or no
+key set). Long recommendation lists are shortened with `…`.
 
-### 1. A grounded, cited answer
-
-```
-$ python -m src.ragqa.cli ask "What does TF-IDF stand for?"
-
-Q: What does TF-IDF stand for?
-
-TF-IDF stands for Term Frequency-Inverse Document Frequency. [1] ... TF-IDF is
-a sparse, transparent representation that needs no training data and no model
-downloads, which makes it easy to run locally and fully reproducible. [1]
-
-Sources:
-  [1] vector_search.md (score 0.239)
-
-backend=offline · grounded=True · abstained=False · attempts=1 · top_retrieval_score=0.239
-```
-
-### 2. Answering a conceptual question, still grounded in the sources
+### 1. Natural-language request → grounded recommendation (with agent trace)
 
 ```
-$ python -m src.ragqa.cli ask "How does self-verification make a RAG system more reliable?"
+$ python -m src.main --ask "something mellow and chill to study to, lo-fi please" -k 3 --trace
 
-Q: How does self-verification make a RAG system more reliable?
+Request: "something mellow and chill to study to, lo-fi please"
+Interpreted as: genre=lofi, mood=chill, energy=0.3
+==================================================
 
-Self-verification is a step in which the system checks its own output before
-returning it. [1] In a RAG system, a verification step confirms that the
-generated answer is grounded in the cited passages; if it is not, the system
-can retry the retrieval or abstain. [1]
+1. Library Rain
+   Artist: Paper Lanterns
+   Score:  3.90
+   Reasons:
+     - Genre match (+1.0)
+     - Mood match (+1.0)
+     - Energy similarity (+1.90)
 
-Sources:
-  [1] guardrails.md (score 0.242)
-  [2] rag.md (score 0.145)
+2. Midnight Coding        … Score: 3.76
+3. Spacewalk Thoughts     … Score: 2.96
+==================================================
 
-backend=offline · grounded=True · abstained=False · attempts=1 · top_retrieval_score=0.242
+DJ says (template): I looked for lofi songs, a chill mood, energy around 0.30. Top pick:
+"Library Rain" by Paper Lanterns (score 3.90: Genre match (+1.0), Mood match (+1.0),
+Energy similarity (+1.90)). Also try: "Midnight Coding", "Spacewalk Thoughts".
+
+[backend=offline · status=ok]
+
+Agent trace:
+  {"step": "validate", "ok": true, "chars": 52}
+  {"step": "interpret", "source": "offline", "on_topic": true, "genre": "lofi", "mood": "chill", "energy": 0.3, ...}
+  {"step": "normalize", "ok": true, "profile": {"genre": "lofi", "mood": "chill", "energy": 0.3}, "warnings": []}
+  {"step": "recommend", "k": 3, "top": [["Library Rain", 3.9], ["Midnight Coding", 3.76], ["Spacewalk Thoughts", 2.96]]}
+  {"step": "verify", "passed": true, "reason": "explanation only references recommended songs", "source": "template"}
 ```
 
-### 3. Safe abstention on an out-of-scope question
+### 2. Synonyms map to catalog values ("rap" → hip hop, "confident" → triumphant)
 
 ```
-$ python -m src.ragqa.cli ask "Who won the 2022 FIFA World Cup?"
+$ python -m src.main --ask "rap music that makes me feel confident" -k 3
 
-Q: Who won the 2022 FIFA World Cup?
+Request: "rap music that makes me feel confident"
+Interpreted as: genre=hip hop, mood=triumphant, energy=0.85
 
-I don't have enough information in the provided documents to answer that.
+1. Concrete Kings   (Ravi Stax)        Score: 4.00  - Genre match (+1.0), Mood match (+1.0), Energy similarity (+2.00)
+2. Sunrise City     (Neon Echo)        Score: 1.94  - Energy similarity (+1.94)
+3. Carnival Heat    (Los Girasoles)    Score: 1.92  - Energy similarity (+1.92)
 
-backend=offline · grounded=False · abstained=True · attempts=1 · top_retrieval_score=0.000
+[backend=offline · status=ok]
 ```
 
-The third question isn't covered by the documents, so retrieval scores fall
-below the threshold and the system **abstains instead of hallucinating** — the
-core safety behavior this project is built to demonstrate.
+### 3. Guardrails: off-topic refusal and an honest "I couldn't match that"
+
+```
+$ python -m src.main --ask "Write my history essay for me"
+
+Request: "Write my history essay for me"
+
+I'm a music DJ, so I can only help with song requests. Try something like
+"upbeat pop for a road trip" or "calm lofi for studying".
+
+[backend=offline · status=out_of_scope]
+```
+
+```
+$ python -m src.main --ask "polka music for my grandma" -k 3
+
+Request: "polka music for my grandma"
+Interpreted as: genre=None, mood=None, energy=0.5
+1. Velvet Hours … 2. Delta Lament … 3. Harvest Wind …
+Note: No energy level detected; using a neutral 0.5.
+Note: I couldn't match a genre or mood from the catalog, so these picks are ranked by energy only.
+```
+
+### 4. Failure handling: Claude unavailable
+
+Run with an **invalid** key against the real API. Claude returns 401, and the
+workflow falls back to offline instead of crashing:
+
+```
+$ ANTHROPIC_API_KEY=sk-ant-invalid DJ_BACKEND=claude python -m src.main --ask "happy pop" -k 2
+
+WARNING | Interpretation failed on claude backend: Claude rejected the API key (check ANTHROPIC_API_KEY).
+Request: "happy pop"
+Interpreted as: genre=pop, mood=happy, energy=0.5
+1. Sunrise City … 2. Rooftop Lights …
+DJ says (template-fallback): I looked for pop songs, a happy mood, energy around 0.50. Top pick: "Sunrise City" ...
+Note: AI interpretation failed (Claude rejected the API key ...); used the offline parser.
+[backend=claude · status=ok]
+```
+
+Forcing Claude with **no** key stops with a clear message (exit code 2):
+`Error: ANTHROPIC_API_KEY is not set; use DJ_BACKEND=offline or add a key to .env.`
+
+The original demo (`python -m src.main`) still prints the same five
+recommendations as before: *Sunrise City 3.96, Rooftop Lights 2.92, Gym Hero
+2.74, Concrete Kings 1.90, Night Drive Loop 1.90*.
 
 ---
 
 ## Design Decisions and Trade-offs
 
-- **Agentic self-verification over a single model call.** The pipeline plans,
-  answers, *and then checks its own answer* against the sources, retrying or
-  abstaining if it isn't grounded. This is the feature that makes it *reliable*
-  rather than just *fluent*. **Trade-off:** more model calls (higher latency and
-  cost) per question.
-- **Local TF-IDF vector search instead of a hosted embedding API.** This keeps
-  the whole system reproducible and offline — no downloads, no extra keys — while
-  still demonstrating real vector search. **Trade-off:** TF-IDF is *lexical*, so
-  a question phrased very differently from the source text can retrieve poorly.
-  A dense-embedding retriever could be swapped in behind the same interface.
-- **Two interchangeable backends (Claude + deterministic offline).** The same
-  pipeline drives both, so the project is impressive *and* reproducible: a
-  grader with no API key can still run everything and pass every test.
-  **Trade-off:** the offline backend's answers are extractive (stitched from
-  source sentences), so they read less fluently than Claude's.
-- **Abstention as a first-class outcome.** A retrieval-score threshold and a
-  grounding check both allow the system to refuse. **Trade-off:** the threshold
-  is tuned for the bundled corpus and may need adjusting for a very different
-  document set (`RAGQA_MIN_SCORE`).
-- **Structured (JSON-schema) outputs from Claude** so responses are reliably
-  parseable rather than free text that needs brittle parsing.
+- **The AI is a layer around the recommender, not a replacement.** Claude never
+  ranks songs; `score_song()` does. This keeps the original project's
+  *transparency over accuracy* goal: every pick still has a numeric, explainable
+  reason. **Trade-off:** the AI can't fix a weak scoring rule. It can only send
+  a better profile into it.
+- **An agentic workflow with fixed steps, not an open-ended agent.** The code
+  decides the order of steps, and the model fills in two of them. That is
+  easier to test, log, and explain than letting a model decide which tools to
+  call. **Trade-off:** less flexible (for example, it can't ask a follow-up
+  question).
+- **Structured output with the catalog as an `enum`.** Claude must answer in a
+  JSON schema whose genre and mood fields only allow values from `songs.csv`.
+  This addresses the "pop vs. indie pop" exact-matching limitation from Module 3.
+  The normalize step still re-checks every value, in case the backend misbehaves.
+- **Self-check on the explanation.** The main risk of an AI explanation is a
+  confident mention of a song that wasn't recommended, or doesn't exist in the
+  catalog at all. The verify step checks that before anything is shown, and
+  falls back to the rule-based reasons. **Trade-off:** it checks song titles,
+  not every claim in the text.
+- **Two interchangeable backends.** The offline backend makes the project
+  reproducible: no key, no cost, deterministic tests. It also serves as the
+  fallback when Claude fails. **Trade-off:** it understands only phrases it has
+  rules for (see the challenge results below).
+- **Model choice.** `claude-opus-5-5` with `effort: "low"` (both tasks are
+  short). The request also opts into Anthropic's server-side refusal fallback
+  (`fallbacks: "default"`). `DJ_MODEL` lets you switch to a cheaper model such
+  as `claude-haiku-5-5`.
 
 ---
 
 ## Testing Summary
 
-The project ships **27 automated tests** (`pytest`) plus an **evaluation
-harness** (`python -m src.ragqa.cli eval`) that scores the pipeline against a
-gold Q&A set.
+### Automated tests: `pytest` → **39 passed**
 
-**What worked.** All 27 tests pass. They cover chunking, retrieval ranking and
-persistence, the offline backend, every pipeline guardrail, the agentic
-retry/abstain loop, and the evaluation harness — and they run **fully offline**,
-so they're reproducible on any machine. On the bundled corpus the harness reports
-**100% abstention accuracy, 100% groundedness, 100% retrieval hit rate, and
-88% keyword recall.**
+```
+$ pytest
+.......................................                                  [100%]
+39 passed in 1.22s
+```
 
-**What didn't (at first) — and what I learned.**
+| File | What it covers |
+|---|---|
+| `tests/test_recommender.py` | The original 2 starter tests, plus a new test that puts the best song **last** to prove the ranking really sorts (the old stub passed by luck) |
+| `tests/test_ai_dj.py` | Input guardrails, profile guardrails (invented genre/mood dropped, energy 7.5 → 1.0), fallback when interpretation fails, **hallucinated-song detection**, explanation must mention the top pick, and the full trace |
+| `tests/test_llm.py` | Offline parser cases, and the **Claude backend with a fake client**: request shape (model, schema `enum`, `<request>` tags), JSON parsing, refusal / `max_tokens` / connection errors → `LLMError`, and backend selection |
+| `tests/test_evaluation.py` | The eval set is well formed, every core case passes, and off-topic requests are never answered |
 
-- A **configuration bug**: I set a new default abstention threshold on the config
-  dataclass, but a separate `load_config()` function was still hard-coding the
-  old value, so the change silently had no effect. The failing evaluation test
-  (an out-of-scope question that *should* have been refused was being answered)
-  is what surfaced it. **Lesson:** an evaluation harness catches behavioral
-  regressions that unit tests on individual functions miss.
-- The **88% keyword recall** (not 100%) is itself a finding, not a failure. On
-  one question the extractive *offline* backend stitches together the most
-  query-overlapping sentences and misses the single most distinctive term. Rather
-  than hide it by editing the gold set, I left it visible — it's exactly the kind
-  of weakness an evaluation harness exists to surface, and it largely disappears
-  with the Claude backend, which writes a genuine answer instead of extracting.
+### Reliability evaluation: `python -m src.evaluate`
 
-The broader lesson: **measuring** an AI system's behavior — especially its
-failure and refusal behavior — is as important as building it.
+The evaluation runs 24 labeled requests through the full workflow. **Core**
+cases (16) were written alongside the offline rules and must pass. **Challenge**
+cases (8) were written *after* the rules, deliberately using phrasing the rules
+don't cover, and the rules were **not** tuned afterwards.
+
+```
+AI DJ evaluation  (backend=offline, 24 cases)
+
+  [core]  16/16 cases fully passed
+    Status accuracy          16/16  100%
+    Genre accuracy            9/9   100%
+    Mood accuracy            10/10  100%
+    Energy in range           7/7   100%
+    Top-3 hit rate           12/12  100%
+    Explanation self-check   13/13  100%
+
+  [challenge]  3/8 cases fully passed
+    Status accuracy           6/8   75%
+    Genre accuracy            1/2   50%
+    Mood accuracy             1/2   50%
+    Energy in range           2/3   67%
+    Explanation self-check    5/5   100%
+```
+
+**What the challenge failures show (offline backend):**
+- **Negation:** "not sad, I want happy songs" → *melancholic*. The parser takes the first mood word it sees.
+- **Context:** "background music for a dinner **party**" → *euphoric*, energy 0.9.
+- **Idioms with no rule:** "feeling blue", "get hyped" (only "hype" is listed), "loud guitars". The first two were refused as off-topic.
+
+These are exactly the cases a language model should handle better. They are the
+reason the Claude backend exists.
+
+> **Claude backend results: not yet measured.** This repo was built and tested
+> without an API key. The Claude code path is covered by fake-client tests, and
+> its error handling was checked against the real API with an invalid key
+> (example 4). To measure it, add a key and run
+> `python -m src.evaluate --backend claude`. A full run makes about 40–45 API
+> calls: one per non-blank request, plus one explanation per answered request.
 
 ---
 
 ## Reflection
 
-Building this taught me that a reliable AI system is less about a single clever
-model call and more about the *scaffolding around it*: retrieval to ground the
-answer, guardrails to catch bad inputs and weak evidence, a self-check to verify
-the output, and an evaluation harness to prove it all works. The hardest and most
-valuable behavior to get right was teaching the system to say **"I don't know"** —
-abstaining is what separates a trustworthy assistant from a confident liar.
+**Key design takeaway:** the most useful place for AI in this recommender was
+not the ranking. The rule-based ranking was already transparent and worked. The
+useful places were the two *language* boundaries: understanding what a person
+means, and explaining the result back to them. Guardrails, a self-check, and
+fallbacks around the AI let it be added without losing the explainability that
+was the point of the original project.
 
-> **Note:** My full, graded responsible-AI reflection — how I collaborated with
-> AI, one helpful and one flawed AI suggestion, and my system's limitations —
-> is in [`model_card.md`](model_card.md).
+The biggest lesson was that a perfect score can mean the test is too easy. The
+first evaluation came back 100%, which felt like success until it was clear the
+test cases and the keyword rules had been written together. Adding challenge
+cases written afterwards dropped the score to 3/8 and showed exactly where the
+offline parser breaks: negation, context, and slang. The same thing happened in
+my original code. The starter `Recommender` test passed even though the method
+never sorted anything, purely because of the order of the test data. Both times,
+the bug only showed up once the test was designed to fail if the code was wrong.
+
+What surprised me was how little of the "AI" needed to be AI. The ranking was
+already good and explainable, so the model only had to translate words in and
+explain results out. Most of the reliability work was ordinary code around it:
+input checks, catalog-only values, a self-check on the explanation, and
+fallbacks. If I did it again, I'd write the evaluation cases *before* the
+rules, and I'd spend effort on a bigger, more balanced song catalog. Many
+requests are understood correctly but still have no good song to match.
+
+The full responsible-AI reflection (limitations, biases, misuse, and how I
+collaborated with AI) is in [`model_card.md`](model_card.md). The agent's
+step-by-step behavior is documented in [`ai_interactions.md`](ai_interactions.md).
 
 ---
 
@@ -271,34 +432,33 @@ abstaining is what separates a trustworthy assistant from a confident liar.
 
 ```
 applied--ai-system-project2/
-├── README.md                 # this file
-├── model_card.md             # responsible-AI reflection + model card
-├── requirements.txt          # dependencies
-├── .env.example              # copy to .env to configure
-├── Makefile                  # convenience commands
-├── diagrams/architectures.mmd# full Mermaid system diagram
+├── README.md                  # this file
+├── model_card.md              # model card + responsible-AI reflection
+├── ai_interactions.md         # agent steps, tool calls, AI collaboration log
+├── requirements.txt / .env.example / Makefile / pytest.ini
+├── app.py                     # Streamlit UI
 ├── data/
-│   ├── docs/                 # knowledge base (.md/.txt/.pdf) — swap in your own
-│   └── eval/qa_eval.jsonl    # gold Q&A set for evaluation
-├── src/ragqa/
-│   ├── config.py             # env-driven configuration
-│   ├── logging_setup.py      # console + file logging
-│   ├── documents.py          # loading + chunking
-│   ├── retriever.py          # TF-IDF vector search (+ persistence)
-│   ├── prompts.py            # Claude prompt templates
-│   ├── llm.py                # Anthropic + offline backends
-│   ├── pipeline.py           # the agentic RAG workflow  ← core
-│   ├── evaluation.py         # reliability/evaluation harness
-│   └── cli.py                # ingest / ask / eval / demo
-├── app_streamlit.py          # optional web UI
-└── tests/                    # offline pytest suite (27 tests)
+│   ├── songs.csv              # original 18-song catalog
+│   └── eval/dj_eval.jsonl     # 24 labeled requests (16 core + 8 challenge)
+├── diagrams/architecture.mmd  # Mermaid system diagram
+├── src/
+│   ├── recommender.py         # ORIGINAL scoring engine (stubs finished, logic unchanged)
+│   ├── main.py                # CLI: original demo, --ask, --eval
+│   ├── ai_dj.py               # agentic workflow + guardrails + self-check
+│   ├── llm.py                 # Claude + offline backends
+│   ├── evaluate.py            # reliability evaluation
+│   └── logging_setup.py       # console + logs/musicrec.log
+├── tests/                     # 39 offline tests
+├── docs/module3_original_README.md
+└── archive/grounded-rag/      # earlier unrelated RAG prototype, kept for reference only
 ```
 
-## Limitations and Future Improvements
+## Limitations and Future Work
 
-- TF-IDF matches wording, not deeper meaning; a dense-embedding retriever could
-  be added behind the same `TfidfRetriever` interface.
-- The knowledge base is small and curated; answers are only as good as the docs.
-- The retrieval threshold is tuned for the bundled corpus.
-- **Future:** stream Claude's answer token-by-token; add an LLM-as-judge grader;
-  cache planning/verification results to cut cost and latency.
+- The catalog is still 18 songs across 15 genres, so many requests can only be
+  matched on energy. **The biggest improvement would be more data**, not more AI.
+- The offline parser misses negation, context, and idioms (see the challenge results).
+- The self-check verifies song titles, not every factual claim in an explanation.
+- **Next:** measure the Claude backend on the eval set; give partial credit for
+  related genres in `score_song()`; use `likes_acoustic`, valence, and
+  danceability in scoring.

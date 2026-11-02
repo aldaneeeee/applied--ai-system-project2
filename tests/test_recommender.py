@@ -59,3 +59,18 @@ def test_explain_recommendation_returns_non_empty_string():
     explanation = rec.explain_recommendation(user, song)
     assert isinstance(explanation, str)
     assert explanation.strip() != ""
+
+
+def test_recommend_sorts_even_when_best_song_is_listed_last():
+    # The starter stub returned songs in file order, which passed the test above
+    # by luck. Reversing the list proves the ranking really uses the scores.
+    user = UserProfile(
+        favorite_genre="pop",
+        favorite_mood="happy",
+        target_energy=0.8,
+        likes_acoustic=False,
+    )
+    rec = make_small_recommender()
+    rec.songs.reverse()
+    assert rec.recommend(user, k=1)[0].title == "Test Pop Track"
+    assert "Genre match" in rec.explain_recommendation(user, rec.songs[-1])

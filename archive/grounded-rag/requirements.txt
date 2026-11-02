@@ -1,0 +1,21 @@
+# Core AI SDK
+anthropic>=0.116.0
+
+# Retrieval (local, offline-capable TF-IDF vector search)
+scikit-learn>=1.4
+numpy>=1.26
+
+# Document ingestion
+pypdf>=4.0
+
+# Config / environment
+python-dotenv>=1.0
+
+# Persistence of the retrieval index
+joblib>=1.3
+
+# Optional web UI
+streamlit>=1.30
+
+# Testing
+pytest>=8.0

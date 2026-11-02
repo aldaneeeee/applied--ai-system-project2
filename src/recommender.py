@@ -1,6 +1,9 @@
 import csv
+import logging
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+
+logger = logging.getLogger("musicrec")
 
 @dataclass
 class Song:
@@ -39,12 +42,27 @@ class Recommender:
         self.songs = songs
 
     def recommend(self, user: UserProfile, k: int = 5) -> List[Song]:
-        # TODO: Implement recommendation logic
-        return self.songs[:k]
+        # Reuse the same scoring rule as the functional API so both stay in sync.
+        prefs = _profile_to_prefs(user)
+        ranked = sorted(
+            self.songs, key=lambda s: score_song(prefs, asdict(s))[0], reverse=True
+        )
+        return ranked[:k]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
-        # TODO: Implement explanation logic
-        return "Explanation placeholder"
+        score, reasons = score_song(_profile_to_prefs(user), asdict(song))
+        if not reasons:
+            return f"{song.title} scored {score:.2f} but matched none of your preferences."
+        return f"{song.title} scored {score:.2f}: " + ", ".join(reasons)
+
+
+def _profile_to_prefs(user: UserProfile) -> Dict:
+    """Convert a UserProfile into the dict format score_song() expects."""
+    return {
+        "favorite_genre": user.favorite_genre,
+        "favorite_mood": user.favorite_mood,
+        "target_energy": user.target_energy,
+    }
 
 def load_songs(csv_path: str) -> List[Dict]:
     """
@@ -62,6 +80,7 @@ def load_songs(csv_path: str) -> List[Dict]:
     float_fields = {"energy", "valence", "danceability", "acousticness"}
 
     songs: List[Dict] = []
+    line_num = 1  # so the error message below works even if the header is bad
 
     try:
         # newline="" is the recommended way to open files for the csv module.
@@ -79,24 +98,24 @@ def load_songs(csv_path: str) -> List[Dict]:
                 songs.append(row)
 
     except FileNotFoundError:
-        print(f"Error: could not find the songs file at '{csv_path}'.")
+        logger.error("Could not find the songs file at '%s'.", csv_path)
         return []
     except (ValueError, KeyError) as err:
         # A malformed number or missing column would land here.
-        print(f"Error: invalid data in '{csv_path}' near line {line_num}: {err}")
+        logger.error("Invalid data in '%s' near line %d: %s", csv_path, line_num, err)
         return []
 
-    print(f"Loaded songs: {len(songs)}")
+    logger.info("Loaded songs: %d", len(songs))
     return songs
 
 def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     """
     Scores a single song against user preferences.
 
-    Scoring recipe:
-      +2.0  if the song's genre matches the user's favorite genre
+    Scoring recipe (after the Weight Shift experiment):
+      +1.0  if the song's genre matches the user's favorite genre
       +1.0  if the song's mood matches the user's favorite mood
-      +E    energy similarity, where E = max(0, 1 - abs(song_energy - target))
+      +E    energy similarity, where E = 2 * max(0, 1 - abs(song_energy - target))
 
     Returns:
         (score, reasons) where score is the total numeric score and
